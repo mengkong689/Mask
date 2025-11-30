@@ -1,4 +1,5 @@
 import discord
+from dotenv import MASK
 from discord.ext import commands
 import asyncio
 import secrets
@@ -90,4 +91,5 @@ async def addrole(ctx, member: discord.Member, role: discord.Role, access_code: 
 # ------------------------------
 # Bot Start
 # ------------------------------
-bot.run("YOUR_BOT_TOKEN")
+MASK()
+TOKEN = bot.run("DISCORD_TOKEN")
