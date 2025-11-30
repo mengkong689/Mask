@@ -1,99 +1,116 @@
 import discord
 from discord.ext import commands
-import asyncio
 import secrets
 import time
+import asyncio
+from dotenv import TOKEN
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+PREFIX = "$"   # <<< Change your prefix here
 
-# Temporary access codes stored in memory
-access_codes = {}  # code: expire_timestamp
+bot = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
 
+# ---------------------------------------------------------
+# Access Code Storage
+# ---------------------------------------------------------
+access_codes = {}  
+# Format:
+# access_codes[code] = {
+#      "expires": timestamp,
+#      "used": False
+# }
 
-# ------------------------------
-# Helper: Check if user has valid code
-# ------------------------------
-def has_valid_code(code: str):
-    if code not in access_codes:
-        return False
-    if time.time() > access_codes[code]:
-        del access_codes[code]
-        return False
-    return True
+# ---------------------------------------------------------
+# Bot Ready Event
+# ---------------------------------------------------------
+@bot.event
+async def on_ready():
+    print(f"Bot is online as {bot.user}")
 
-
-# ------------------------------
-# !generatecode (Owner Only)
-# ------------------------------
+# ---------------------------------------------------------
+# Command: Generate Access Code (owner only)
+# ---------------------------------------------------------
 @bot.command()
 @commands.is_owner()
-async def generatecode(ctx, expires_in_minutes: int = 5):
-    code = secrets.token_hex(4)
-    expire_time = time.time() + (expires_in_minutes * 60)
-    access_codes[code] = expire_time
+async def gen_code(ctx, expire_seconds: int = 300):
+    """
+    Generate an admin access code that expires in X seconds.
+    """
+    code = secrets.token_hex(4)  # short code
+    expire_time = time.time() + expire_seconds
 
-    await ctx.send(
-        f"✅ **Access Code Generated**\n"
-        f"**Code:** `{code}`\n"
-        f"Expires in: **{expires_in_minutes} minutes**"
-    )
+    access_codes[code] = {
+        "expires": expire_time,
+        "used": False
+    }
 
+    await ctx.send(f"✅ **Access Code Generated**\n```\n{code}\n```\nExpires in **{expire_seconds}s**")
 
-# ------------------------------
-# Protected Command Helper
-# ------------------------------
-async def require_code(ctx, code: str):
-    if not has_valid_code(code):
-        await ctx.send("❌ Invalid or expired access code.")
-        return False
-    return True
-
-
-# ------------------------------
-# !createchannel (Requires Code)
-# ------------------------------
+# ---------------------------------------------------------
+# Command: Use Access Code
+# ---------------------------------------------------------
 @bot.command()
-async def createchannel(ctx, channel_name: str, access_code: str):
-    if not await require_code(ctx, access_code):
-        return
+async def use_code(ctx, code: str):
+    """
+    Users can redeem an access code to unlock admin commands temporarily.
+    """
 
-    guild = ctx.guild
-    await guild.create_text_channel(channel_name)
-    await ctx.send(f"✅ Created channel **#{channel_name}**")
+    if code not in access_codes:
+        return await ctx.send("❌ Invalid code.")
 
+    data = access_codes[code]
 
-# ------------------------------
-# !announce (Requires Code)
-# ------------------------------
+    if data["used"]:
+        return await ctx.send("❌ Code already used.")
+
+    if time.time() > data["expires"]:
+        return await ctx.send("❌ Code expired.")
+
+    # Code valid → allow admin permission
+    data["used"] = True
+    role = discord.utils.get(ctx.guild.roles, name="TempAdmin")
+
+    if role is None:
+        role = await ctx.guild.create_role(name="TempAdmin", permissions=discord.Permissions(administrator=True))
+
+    await ctx.author.add_roles(role)
+    await ctx.send(f"✅ Code accepted! **{ctx.author}** now has **TempAdmin** role.")
+
+# ---------------------------------------------------------
+# Safe Commands
+# ---------------------------------------------------------
 @bot.command()
-async def announce(ctx, channel: discord.TextChannel, *, message_and_code: str):
-    """Usage: !announce #channel message_here | code"""
-    if "|" not in message_and_code:
-        return await ctx.send("❌ Use format: `!announce #channel message | code`")
+async def ping(ctx):
+    start = time.perf_counter()
+    await ctx.trigger_typing()
+    end = time.perf_counter()
+    latency = round((end - start) * 1000)
+    await ctx.send(f"Pong! `{latency}ms`")
 
-    message, access_code = [part.strip() for part in message_and_code.split("|", 1)]
-
-    if not await require_code(ctx, access_code):
-        return
-
-    await channel.send(f"📢 **Announcement:**\n{message}")
-    await ctx.send("✅ Announcement sent!")
-
-
-# ------------------------------
-# !addrole (Requires Code)
-# ------------------------------
 @bot.command()
-async def addrole(ctx, member: discord.Member, role: discord.Role, access_code: str):
-    if not await require_code(ctx, access_code):
-        return
+async def clear(ctx, amount: int = 10):
+    if not ctx.author.guild_permissions.manage_messages:
+        return await ctx.send("❌ You don't have permission to clear messages.")
 
-    await member.add_roles(role)
-    await ctx.send(f"✅ Added role **{role.name}** to **{member.name}**")
+    deleted = await ctx.channel.purge(limit=amount)
+    await ctx.send(f"🧹 Deleted `{len(deleted)}` messages.", delete_after=3)
 
+@bot.command()
+async def info(ctx, member: discord.Member = None):
+    member = member or ctx.author
 
-# ------------------------------
-# Bot Start
-# ------------------------------
-bot.run("MTA3MzE5MjA3MzY4OTMwMTAxNA.GwENak.1yxC5OwXnqgBjqt6FZDr0xPBz-WqIygd0dZUYw")
+    embed = discord.Embed(title=f"{member.name}'s Info", color=discord.Color.blue())
+    embed.add_field(name="ID", value=member.id)
+    embed.add_field(name="Status", value=member.status)
+    embed.add_field(name="Top Role", value=member.top_role)
+    embed.add_field(name="Joined", value=member.joined_at)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def invite(ctx):
+    await ctx.send("🔗 Invite the bot:\nhttps://discord.com/oauth2/authorize?client_id=YOUR_ID&permissions=8&scope=bot")
+
+# ---------------------------------------------------------
+# Run Bot
+# ---------------------------------------------------------
+bot.run("TOKEN")
